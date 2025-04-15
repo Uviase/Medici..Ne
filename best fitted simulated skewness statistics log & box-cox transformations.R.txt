@@ -1,0 +1,89 @@
+# Load required libraries
+library(dplyr)
+library(ggplot2)
+library(moments)
+
+# Load dataset
+file_path <- "dataset.csv"  # Replace with the path to your dataset
+dataset <- read.csv(file_path)
+
+# Preprocessing: Remove zero value rows from specific columns
+columns_to_check <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", "AC", "AF", "AI", 
+                      "AL", "AO", "AR", "AV", "AX", "BA", "BD", "BG", "BJ", "BM", 
+                      "BP", "BS", "BV", "BY", "CB", "CE", "CH", "CK")
+
+dataset <- dataset %>%
+  filter(if_all(all_of(columns_to_check), ~ . != 0))
+
+# Define cognitive performance bins
+cognitive_values <- c(78, 82, 91, 82, 85, 90, 77, 90, 94, 75, 77, 74.5, 67, 77, 78.5, 
+                      71, 64, 87.5, 64, 33, 55, 92, 88, 92, 80, 39, 63, 89, 64, 58)
+
+cognitive_bins <- cut(cognitive_values,
+                      breaks = quantile(cognitive_values, probs = c(0, 0.333, 0.667, 1)),
+                      labels = c("Low cognition", "Mid cognition", "High cognition"),
+                      include.lowest = TRUE)
+
+# Helper function to calculate statistics
+calculate_statistics <- function(data) {
+  data.frame(
+    Mean = round(mean(data), 2),
+    StandardDeviation = round(sd(data), 2),
+    Maximum = round(max(data), 2),
+    Minimum = round(min(data), 2)
+  )
+}
+
+# Analysis for Temperature only
+temperature_columns <- c("A", "D", "G", "J", "M", "P", "S", "V", "Y", "AB", "AE", 
+                         "AH", "AK", "AN", "AQ", "AT", "AW", "AZ", "BC", "BF", "BI", 
+                         "BL", "BO", "BR", "BU", "BX", "CA", "CD", "CG", "CJ")
+
+temperature_stats <- dataset %>%
+  select(all_of(temperature_columns)) %>%
+  summarise(across(everything(), ~ calculate_statistics(.x))) %>%
+  bind_cols(cognitive_bins)
+
+# Analysis for Electrodermal Activity only
+electrodermal_columns <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", "AC", "AF",
+                           "AI", "AL", "AO", "AR", "AV", "AX", "BA", "BD", "BG", 
+                           "BJ", "BM", "BP", "BS", "BV", "BY", "CB", "CE", "CH", "CK")
+
+electrodermal_stats <- dataset %>%
+  select(all_of(electrodermal_columns)) %>%
+  summarise(across(everything(), ~ calculate_statistics(.x))) %>%
+  bind_cols(cognitive_bins)
+
+# Merge tables
+merged_table <- data.frame(
+  CognitivePerformance = c("**Cognitive Performance**", "", "High", "Mid", "Low", 
+                           "**Electrodermal Activity only**", "High", "Mid", "Low"),
+  Mean = c("", "**Temperature only**", temperature_stats$Mean, "", electrodermal_stats$Mean),
+  StandardDeviation = c("", "", temperature_stats$StandardDeviation, "", electrodermal_stats$StandardDeviation),
+  Maximum = c("", "", temperature_stats$Maximum, "", electrodermal_stats$Maximum),
+  Minimum = c("", "", temperature_stats$Minimum, "", electrodermal_stats$Minimum)
+)
+
+print(merged_table)
+
+# Simulate data for skewness statistics
+simulate_data <- function(original_data, size) {
+  simulated_data <- original_data %>%
+    sample_n(size, replace = TRUE)
+  
+  list(
+    TemperatureSkewness = skewness(simulated_data %>% select(all_of(temperature_columns)) %>% unlist()),
+    ElectrodermalActivitySkewness = skewness(simulated_data %>% select(all_of(electrodermal_columns)) %>% unlist())
+  )
+}
+
+# Simulate for N=100 and N=1,000
+simulation_100 <- simulate_data(dataset, 100)
+simulation_1000 <- simulate_data(dataset, 1000)
+
+# Print skewness statistics
+cat("Skewness for N=100:\n")
+print(simulation_100)
+
+cat("\nSkewness for N=1,000:\n")
+print(simulation_1000)
