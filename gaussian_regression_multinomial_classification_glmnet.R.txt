@@ -1,0 +1,80 @@
+# Load necessary libraries
+library(glmnet)
+library(caret)
+
+# Set random seed
+set.seed(1)
+
+# Define the file path to the dataset
+file_path <- "https://github.com/Uviase/Medici..Ne/blob/21aad7a0d1d0c4b354b1bd6cffd5e45fdd691c9a/dataset.zip"
+
+# Download and unzip the dataset
+temp_file <- tempfile()
+download.file(file_path, temp_file)
+unzip(temp_file, exdir = tempdir())
+csv_path <- file.path(tempdir(), "dataset.csv")
+
+# Read the dataset
+data <- read.csv(csv_path, header = TRUE)
+
+# If the dataset doesn't contain headings, manually assign headings
+if (is.null(names(data))) {
+  colnames(data) <- c(paste0(LETTERS, letters[1:12]), paste0("A", LETTERS[1:12]))
+}
+
+# Preprocessing
+# Remove the first row except for specified cognition columns
+cognition_columns <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AL", 
+                       "AM", "AP", "AS", "AV", "AY", "BB", "BE", "BH", "BK", "BN", "BQ", 
+                       "BT", "BW", "BZ", "CC", "CF", "CI", "CL")
+cognition_indices <- which(names(data) %in% cognition_columns)
+data <- data[-1, ] # Remove the first row
+
+# Remove zero values in the second row for Electrodermal Activity columns
+eda_columns <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", "AC", "AF", "AI", "AL", 
+                 "AO", "AR", "AV", "AX", "BA", "BD", "BG", "BJ", "BM", "BP", "BS", "BV", 
+                 "BY", "CB", "CE", "CH", "CK")
+eda_indices <- which(names(data) %in% eda_columns)
+data <- data[-which(data[2, eda_indices] == 0), ]
+
+# Define cognition bins
+cognition_values <- c(33, 94) # Define the range of cognition values
+low_bin <- (33.3/100) * diff(cognition_values) + cognition_values[1]
+mid_bin <- (66.7/100) * diff(cognition_values) + cognition_values[1]
+
+# Bin cognition values
+data$cognition_bin <- cut(as.numeric(data[, cognition_indices]), 
+                          breaks = c(-Inf, low_bin, mid_bin, Inf), 
+                          labels = c("Low", "Mid", "High"), 
+                          right = TRUE)
+
+# Prepare dataset for GLMNet
+X <- as.matrix(data[, -c(cognition_indices)]) # Predictor variables
+y <- as.numeric(data$cognition_bin)           # Target variable (cognition)
+
+# Fit GLMNet model
+cv_model <- cv.glmnet(X, y, alpha = 0.5, family = "multinomial", type.measure = "auc")
+
+# Examine coefficients under penalty
+coef(cv_model, s = "lambda.min")
+
+# Examine coefficient paths
+plot(cv_model)
+
+# Retain influential variables
+influential_vars <- which(coef(cv_model, s = "lambda.min") != 0)
+
+# Cross-validation metrics
+print(cv_model$cvm)
+
+# Validate predictions and interpret
+pred <- predict(cv_model, X, s = "lambda.min", type = "response")
+confusion_matrix <- confusionMatrix(as.factor(pred), as.factor(data$cognition_bin))
+
+# Print confusion matrix
+print(confusion_matrix)
+
+# Analyze standardized coefficients for variable importance
+standardized_coef <- coef(cv_model, s = "lambda.min")
+sorted_coef <- sort(abs(standardized_coef), decreasing = TRUE)
+print(sorted_coef)
