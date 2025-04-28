@@ -1,0 +1,100 @@
+# Load required libraries
+library(readr)
+library(dplyr)
+library(tidyr)
+library(lme4)
+library(splines)
+library(ggplot2)
+library(caret)
+
+# Define constants
+CognitionRanges <- c(33, 94) # Min and Max cognition scores
+BinBounds <- c(33.3, 66.7) # Percentile boundaries for binning cognition
+
+# Function to bin cognition
+bin_cognition <- function(value, min_val, max_val) {
+  range <- max_val - min_val
+  if (value <= min_val + range * (BinBounds[1] / 100)) {
+    return("Low")
+  } else if (value <= min_val + range * (BinBounds[2] / 100)) {
+    return("Mid")
+  } else {
+    return("High")
+  }
+}
+
+# Load dataset
+dataset_path <- "path_to_extracted_dataset.csv" # Change to dataset path
+data <- tryCatch(
+  read_csv(dataset_path),
+  error = function(e) {
+    read_csv(dataset_path, col_names = FALSE)
+  }
+)
+
+# Define column names if missing
+if (!all(colnames(data) %in% letters)) {
+  colnames(data) <- c(LETTERS, paste0("A", LETTERS), paste0("B", LETTERS), paste0("C", LETTERS[1:12]))
+}
+
+# Preprocess data
+# Remove zero values in the second row for Electrodermal Activity columns
+eda_columns <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", 
+                 "AC", "AF", "AI", "AL", "AO", "AR", "AV", "AX", "BA",
+                 "BD", "BG", "BJ", "BM", "BP", "BS", "BV", "BY", "CB",
+                 "CE", "CH", "CK")
+data <- data[-which(data[2, eda_columns] == 0), ]
+
+# Extract cognition-related columns
+cognition_columns <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AL", "AM",
+                       "AP", "AS", "AV", "AY", "BB", "BE", "BH", "BK", "BN", "BQ", "BT", 
+                       "BW", "BZ", "CC", "CF", "CI", "CL")
+
+# Bin temperatures and electrodermal activities
+temperature_columns <- c("A", "D", "G", "J", "M", "P", "S", "V", "Y", "AB", "AE", "AH", "AK",
+                         "AN", "AQ", "AT", "AW", "AZ", "BC", "BF", "BI", "BL", "BO", "BR",
+                         "BU", "BX", "CA", "CD", "CG", "CJ")
+data <- data %>%
+  mutate(across(all_of(temperature_columns), ~ bin_cognition(.x, CognitionRanges[1], CognitionRanges[2])))
+
+eda_columns <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", "AC", "AF", "AI", "AL", "AO", 
+                 "AR", "AV", "AX", "BA", "BD", "BG", "BJ", "BM", "BP", "BS", "BV", "BY", "CB", 
+                 "CE", "CH", "CK")
+data <- data %>%
+  mutate(across(all_of(eda_columns), ~ bin_cognition(.x, CognitionRanges[1], CognitionRanges[2])))
+
+# Reshape data to long format for analysis
+data_long <- data %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value") %>%
+  mutate(Exam = rep(c("First", "Second", "Final"), times = ncol(data) / 3),
+         Candidate = rep(1:10, each = nrow(data) / 10))
+
+# Define dependent variable (Cognition scores)
+cognition_data <- data_long %>%
+  filter(Variable %in% cognition_columns) %>%
+  mutate(Cognition = as.numeric(Value))
+
+# Fit Random Regression model
+# Fixed effects: Temperature, Electrodermal Activity, spline-transformed Exam Time
+# Random effects: Random intercepts and random slopes for Exam Time
+model <- lmer(Cognition ~ ns(as.numeric(Exam), df = 3) + Temperature + Electrodermal_Activity +
+                (1 + Exam | Candidate),
+              data = cognition_data, REML = FALSE, control = lmerControl(optimizer = "bobyqa"))
+
+# Predict individual cognitive trajectories
+predictions <- ranef(model, condVar = TRUE)
+
+# Validate model using stratified 10-fold cross-validation
+train_control <- trainControl(method = "cv", number = 10, classProbs = TRUE, stratified = TRUE)
+model_crossval <- train(Cognition ~ ., data = cognition_data, method = "lm", trControl = train_control)
+
+# Model diagnostics
+residuals <- resid(model)
+ggplot(data.frame(Residuals = residuals), aes(x = Residuals)) +
+  geom_histogram(binwidth = 1, fill = "blue", alpha = 0.7) +
+  labs(title = "Residuals Histogram", x = "Residuals", y = "Frequency")
+
+# Print outputs
+summary(model)
+summary(predictions)
+summary(model_crossval)
