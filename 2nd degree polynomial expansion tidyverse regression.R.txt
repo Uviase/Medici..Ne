@@ -1,0 +1,95 @@
+# Load required libraries
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(GGally)
+library(corrplot)
+library(tidymodels)
+library(broom)
+
+# Step 1: Load the dataset
+# Download and unzip the dataset
+temp_file <- tempfile(fileext = ".zip")
+download.file("https://github.com/Uviase/Medici..Ne/blob/381b9425cd7dfcb92d6993e1610153e6e6097e3f/dataset.zip?raw=true", temp_file)
+unzip(temp_file, exdir = tempdir())
+dataset_path <- file.path(tempdir(), "dataset.csv")
+
+# Read the CSV file, assuming no headers
+data <- read_csv(dataset_path, col_names = FALSE)
+
+# Step 2: Clean the dataset
+# Remove the second row for Electrodermal Activity columns with zero values
+eda_columns <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", "AC", "AF", "AI", "AL", "AO",
+                 "AR", "AV", "AX", "BA", "BD", "BG", "BJ", "BM", "BP", "BS", "BV", "BY",
+                 "CB", "CE", "CH", "CK")
+eda_indices <- match(eda_columns, LETTERS)
+data <- data[-2, ]  # Remove second row
+
+# Rename Cognitive columns for ease of use
+cognition_columns <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AL", "AM",
+                       "AP", "AS", "AV", "AY", "BB", "BE", "BH", "BK", "BN", "BQ", "BT", "BW",
+                       "BZ", "CC", "CF", "CI", "CL")
+cognition_indices <- match(cognition_columns, LETTERS)
+colnames(data)[cognition_indices] <- paste0("Cognition_", seq_along(cognition_indices))
+
+# Step 3: Transform the dataset
+# Create bins for cognition levels
+cognition_values <- c(33, 94)
+bin_thresholds <- quantile(cognition_values, probs = c(0, 0.333, 0.667, 1))
+bin_labels <- c("Low", "Mid", "High")
+data <- data %>%
+  mutate(across(starts_with("Cognition_"), ~ cut(as.numeric(.), breaks = bin_thresholds, labels = bin_labels)))
+
+# Normalize Temperature and Electrodermal Activity
+temperature_columns <- c("A", "D", "G", "J", "M", "P", "S", "V", "Y", "AB", "AE", "AH", "AK",
+                         "AN", "AQ", "AT", "AW", "AZ", "BC", "BF", "BI", "BL", "BO", "BR",
+                         "BU", "BX", "CA", "CD", "CG", "CJ")
+eda_columns <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", "AC", "AF", "AI", "AL", "AO",
+                 "AR", "AV", "AX", "BA", "BD", "BG", "BJ", "BM", "BP", "BS", "BV", "BY",
+                 "CB", "CE", "CH", "CK")
+
+data <- data %>%
+  mutate(across(all_of(temperature_columns), scale)) %>%
+  mutate(across(all_of(eda_columns), scale))
+
+# Step 4: Reshape the dataset
+# Convert wide format to long format if needed
+data_long <- data %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value")
+
+# Step 5: Check distributions and correlations
+# Correlation plot
+corr_matrix <- cor(data_long %>% select(where(is.numeric)))
+corrplot(corr_matrix, method = "circle")
+
+# Step 6: Define model formula
+model_formula <- formula("Cognition ~ Temperature + Electrodermal_Activity +
+                          I(Temperature^2) + I(Electrodermal_Activity^2) +
+                          Temperature:Electrodermal_Activity")
+
+# Step 7: Fit a linear regression model
+model <- linear_reg() %>%
+  set_engine("lm") %>%
+  fit(model_formula, data = data)
+
+# Step 8: Summarize the model
+model_summary <- tidy(model)
+model_glance <- glance(model)
+
+# Step 9: Resampling
+set.seed(123)
+data_split <- initial_split(data, prop = 0.8)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+
+resamples <- vfold_cv(train_data, v = 5)
+model_resample <- fit_resamples(
+  model_formula,
+  resamples = resamples,
+  metrics = metric_set(rmse, rsq)
+)
+
+# Output summary
+print(model_summary)
+print(model_glance)
