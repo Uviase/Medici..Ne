@@ -27,7 +27,7 @@ eda_indices <- match(eda_columns, LETTERS)
 data <- data[-2, ]  # Remove second row
 
 # Rename Cognitive columns for ease of use
-cognition_columns <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AL", "AM",
+cognition_columns <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AJ", "AM",
                        "AP", "AS", "AV", "AY", "BB", "BE", "BH", "BK", "BN", "BQ", "BT", "BW",
                        "BZ", "CC", "CF", "CI", "CL")
 cognition_indices <- match(cognition_columns, LETTERS)
