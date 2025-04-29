@@ -1,0 +1,63 @@
+# Load required libraries
+library(readr)
+library(forecast)
+library(tseries)
+
+# Load Dataset
+dataset <- read.csv("dataset.csv") # Replace with the extracted file path
+
+# Preprocessing
+# Remove first row except specific columns
+columns_to_keep <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AJ", "AM", "AP", "AS", "AV", "AY", "BB", "BE", "BH", "BK", "BN", "BQ", "BT", "BW", "BZ", "CC", "CF", "CI", "CL")
+dataset <- dataset[-1, ] # Drop the first row
+dataset <- dataset[, columns_to_keep] # Keep only specific columns
+
+# Remove rows with zero values in specific Electrodermal Activity columns
+eda_columns <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", "AC", "AF", "AI", "AL", "AO", "AR", "AV", "AX", "BA", "BD", "BG", "BJ", "BM", "BP", "BS", "BV", "BY", "CB", "CE", "CH", "CK")
+dataset <- dataset[!(dataset[eda_columns] == 0), ]
+
+# Convert cognitive columns to time series and fit ARIMA model
+cognitive_columns <- columns_to_keep
+results <- list()
+
+for (col in cognitive_columns) {
+  # Create time series for each candidate
+  ts_data <- ts(dataset[[col]], frequency = 3) # Quarterly data
+  
+  # Test for stationarity
+  adf_test <- adf.test(ts_data)
+  while (adf_test$p.value > 0.05) {
+    ts_data <- diff(ts_data) # First differencing if necessary
+    adf_test <- adf.test(ts_data)
+  }
+  
+  # Determine ARIMA orders
+  p <- sum(Pacf(ts_data, plot = FALSE)$acf > 0.2) # Example threshold
+  q <- sum(Acf(ts_data, plot = FALSE)$acf > 0.2) # Example threshold
+  d <- adf_test$k # Number of differencing steps
+  
+  # Fit ARIMA model
+  arima_model <- arima(ts_data, order = c(p, d, q), method = "ML")
+  
+  # Ljung Box Test
+  ljung_box <- Box.test(arima_model$residuals, lag = 10, type = "Ljung-Box")
+  
+  # Save results
+  results[[col]] <- list(
+    model = arima_model,
+    ljung_box = ljung_box,
+    aic = AIC(arima_model),
+    bic = BIC(arima_model)
+  )
+  
+  # Forecast
+  forecast_result <- forecast(arima_model, h = 3)
+  print(paste("Forecast for", col))
+  print(forecast_result)
+  
+  # Validation (if holdout data is available)
+  # Assuming holdout data is available as dataset_holdout
+  # rmse <- sqrt(mean((forecast_result$mean - dataset_holdout[[col]])^2))
+  # mae <- mean(abs(forecast_result$mean - dataset_holdout[[col]]))
+  # mape <- mean(abs((forecast_result$mean - dataset_holdout[[col]]) / dataset_holdout[[col]]) * 100)
+}
