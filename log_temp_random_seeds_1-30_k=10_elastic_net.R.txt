@@ -19,7 +19,7 @@ data <- fread(dataset_path)
 
 # Data Preprocessing
 # Extract useful columns
-cognition_cols <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AL", 
+cognition_cols <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AJ", 
                     "AM", "AP", "AS", "AV", "AY", "BB", "BE", "BH", "BK", "BN", "BQ", 
                     "BT", "BW", "BZ", "CC", "CF", "CI", "CL")
 temperature_cols <- c("A", "D", "G", "J", "M", "P", "S", "V", "Y", "AB", "AE", "AH", 
