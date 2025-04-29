@@ -24,7 +24,7 @@ if (is.null(names(data))) {
 
 # Preprocessing
 # Remove the first row except for specified cognition columns
-cognition_columns <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AL", 
+cognition_columns <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AJ", 
                        "AM", "AP", "AS", "AV", "AY", "BB", "BE", "BH", "BK", "BN", "BQ", 
                        "BT", "BW", "BZ", "CC", "CF", "CI", "CL")
 cognition_indices <- which(names(data) %in% cognition_columns)
