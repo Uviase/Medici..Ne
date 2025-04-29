@@ -46,7 +46,7 @@ eda_columns <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z",
 data <- data[-which(data[2, eda_columns] == 0), ]
 
 # Extract cognition-related columns
-cognition_columns <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AL", "AM",
+cognition_columns <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AJ", "AM",
                        "AP", "AS", "AV", "AY", "BB", "BE", "BH", "BK", "BN", "BQ", "BT", 
                        "BW", "BZ", "CC", "CF", "CI", "CL")
 
