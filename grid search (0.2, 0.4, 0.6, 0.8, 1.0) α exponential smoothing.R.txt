@@ -1,0 +1,110 @@
+# Load necessary libraries
+library(dplyr)
+library(readr)
+
+# Load the dataset
+dataset_url <- "https://github.com/Uviase/Medici..Ne/blob/8fa94f263dd5523e6946b966d21fb9459db2091d/dataset.zip"
+temp_file <- tempfile()
+download.file(dataset_url, temp_file)
+unzip(temp_file, exdir = tempdir())
+csv_files <- list.files(tempdir(), pattern = "\\.csv$", full.names = TRUE)
+
+# Read the dataset (if multiple CSVs, pick the first)
+data <- read.csv(csv_files[1], header = FALSE)
+
+# Define cognitive columns and their first row values
+cognitive_columns <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AJ", 
+                       "AM", "AP", "AS", "AV", "AY", "BB", "BE", "BH", "BK", "BN", "BQ", 
+                       "BT", "BW", "BZ", "CC", "CF", "CI", "CL")
+cognitive_scores <- c(78, 82, 91, 82, 85, 90, 77, 90, 94, 75, 77, 74.5, 67, 77, 78.5, 
+                      71, 64, 87.5, 64, 33, 55, 92, 88, 92, 80, 39, 63, 89, 64, 58)
+
+# Convert column names to match indices in the dataset
+cognitive_indices <- match(cognitive_columns, LETTERS)
+
+# Remove Electrodermal Activity zero values in row 2 as specified
+eda_columns <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", "AC", "AF", "AI", "AL", 
+                 "AO", "AR", "AV", "AX", "BA", "BD", "BG", "BJ", "BM", "BP", "BS", 
+                 "BV", "BY", "CB", "CE", "CH", "CK")
+eda_indices <- match(eda_columns, LETTERS)
+data[2, eda_indices][data[2, eda_indices] == 0] <- NA
+data <- data[-2, ]  # Remove second row
+
+# Compute cognitive bins
+cognition_bins <- function(score) {
+  if (score <= 33.3) {
+    return("Low")
+  } else if (score <= 66.7) {
+    return("Mid")
+  } else {
+    return("High")
+  }
+}
+
+# Aggregate bins for cognitive scores
+cognitive_bins <- sapply(cognitive_scores, cognition_bins)
+data$cognitive_bins <- cognitive_bins
+
+# Exponential Smoothing Functions
+holt_forecast <- function(scores, alpha, beta, h = 1) {
+  n <- length(scores)
+  L <- numeric(n)
+  T <- numeric(n)
+  L[1] <- scores[1]
+  T[1] <- scores[2] - scores[1]
+  
+  for (t in 2:n) {
+    L[t] <- alpha * scores[t] + (1 - alpha) * (L[t - 1] + T[t - 1])
+    T[t] <- beta * (L[t] - L[t - 1]) + (1 - beta) * T[t - 1]
+  }
+  
+  # Forecast for h steps ahead
+  forecast <- L[n] + h * T[n]
+  return(list(forecast = forecast, L = L, T = T))
+}
+
+# Grid Search for Optimal Alpha
+alphas <- seq(0.2, 1, by = 0.2)
+beta <- 0.4  # Fixed beta
+results <- list()
+
+for (alpha in alphas) {
+  mse_list <- numeric(length(cognitive_scores))
+  
+  for (i in seq_along(cognitive_scores)) {
+    scores <- cognitive_scores[i]
+    model <- holt_forecast(scores, alpha, beta, h = 1)
+    forecast <- model$forecast
+    mse_list[i] <- mean((scores - forecast)^2)
+  }
+  
+  avg_mse <- mean(mse_list)
+  results[[as.character(alpha)]] <- avg_mse
+}
+
+# Select optimal alpha
+optimal_alpha <- as.numeric(names(which.min(unlist(results))))
+
+# Forecasting and Metrics
+forecasts <- numeric(length(cognitive_scores))
+actuals <- numeric(length(cognitive_scores))
+
+for (i in seq_along(cognitive_scores)) {
+  scores <- cognitive_scores[i]
+  model <- holt_forecast(scores, optimal_alpha, beta, h = 1)
+  forecasts[i] <- model$forecast
+  actuals[i] <- scores[length(scores)]
+}
+
+# Calculate Metrics
+mae <- mean(abs(forecasts - actuals))
+mse <- mean((forecasts - actuals)^2)
+
+# Output Results
+cat("Optimal Alpha:", optimal_alpha, "\n")
+cat("Mean Absolute Error (MAE):", mae, "\n")
+cat("Mean Squared Error (MSE):", mse, "\n")
+
+# Cleanup
+unlink(temp_file)
+unlink(tempdir(), recursive = TRUE)
