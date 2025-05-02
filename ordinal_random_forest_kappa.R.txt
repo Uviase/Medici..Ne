@@ -1,0 +1,104 @@
+# Required Libraries
+library(readr)
+library(dplyr)
+library(forcats)
+library(ordinalForest)
+library(caret)
+library(psych)
+
+# 1. Data Preprocessing
+
+# 1.1. Import and Initial Clean-up
+url <- "https://github.com/Uviase/Medici..Ne/blob/8665ccb972e8d03968d8c17ac31f04a277bde5a3/dataset.zip"
+temp_file <- tempfile()
+download.file(url, temp_file)
+unzip(temp_file, exdir = tempdir())
+dataset_file <- list.files(tempdir(), pattern = "*.csv", full.names = TRUE)
+data <- read_csv(dataset_file, col_names = FALSE)
+colnames(data) <- c(paste0("Temperature_", LETTERS), paste0("Electrodermal_", LETTERS), paste0("Cognition_", LETTERS))
+
+# 1.2. Restrict First Row Use
+cognition_cols <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA",
+                    "AD", "AG", "AJ", "AM", "AP", "AS", "AV", "AY", "BB",
+                    "BE", "BH", "BK", "BN", "BQ", "BT", "BW", "BZ", "CC",
+                    "CF", "CI", "CL")
+cognitive_columns <- grep(paste(cognition_cols, collapse = "|"), colnames(data), value = TRUE)
+first_row_cognition <- data[1, cognitive_columns]
+
+# 1.3. Electrodermal Activity Cleanup
+electrodermal_cols <- grep("Electrodermal", colnames(data), value = TRUE)
+data <- data %>%
+  filter(!(row_number() == 2 & across(all_of(electrodermal_cols), ~ . == 0)))
+
+# 1.4. Binning Cognitive Labels
+min_cognition <- 33
+max_cognition <- 94
+bins <- c(min_cognition, 53.1, 73.3, max_cognition)
+labels <- c("Low", "Mid", "High")
+data <- data %>%
+  mutate(across(all_of(cognitive_columns), ~ cut(as.numeric(.), breaks = bins, labels = labels, include.lowest = TRUE)))
+
+# 2. Feature-Label Structure
+
+# Define exam-specific columns
+exam_structure <- list(
+  First_Midterm = list(
+    Temperature = c("A", "J", "S", "AB", "AK", "AT", "BC", "BL", "BU", "CD"),
+    Electrodermal = c("B", "K", "T", "AC", "AL", "AV", "BD", "BM", "BV", "CE"),
+    Cognition = c("C", "L", "U", "AD", "AM", "AV", "BE", "BN", "BW", "CF")
+  ),
+  Second_Midterm = list(
+    Temperature = c("D", "M", "V", "AE", "AN", "AW", "BF", "BO", "BX", "CG"),
+    Electrodermal = c("E", "N", "W", "AF", "AO", "AX", "BG", "BP", "BY", "CH"),
+    Cognition = c("F", "O", "X", "AG", "AP", "AY", "BH", "BQ", "BZ", "CI")
+  ),
+  Final_Exam = list(
+    Temperature = c("G", "P", "Y", "AH", "AQ", "AZ", "BI", "BR", "CA", "CJ"),
+    Electrodermal = c("H", "Q", "Z", "AI", "AR", "BA", "BJ", "BS", "CB", "CK"),
+    Cognition = c("I", "R", "AA", "AJ", "AS", "BB", "BK", "BT", "CC", "CL")
+  )
+)
+
+# 3. Modeling
+
+# 3.1. Train-Test Split and 3.2. Model Type
+results <- list()
+for (exam in names(exam_structure)) {
+  temp_cols <- exam_structure[[exam]]$Temperature
+  electro_cols <- exam_structure[[exam]]$Electrodermal
+  cog_cols <- exam_structure[[exam]]$Cognition
+  
+  features <- data %>%
+    select(all_of(c(temp_cols, electro_cols)))
+  labels <- data %>%
+    pull(all_of(cog_cols))
+  
+  # Split data by candidate
+  set.seed(123)
+  train_idx <- sample(1:nrow(features), size = 0.7 * nrow(features))
+  train_features <- features[train_idx, ]
+  train_labels <- labels[train_idx]
+  test_features <- features[-train_idx, ]
+  test_labels <- labels[-train_idx]
+  
+  # Train ordinal random forest
+  orf_model <- ordfor(depvar = train_labels, data = train_features, nsets = 100)
+  
+  # 4. Evaluation Using Kappa Statistics
+  predictions <- predict(orf_model, newdata = test_features)$class
+  kappa_linear <- cohen.kappa(data.frame(test_labels, predictions), weights = "linear")$value
+  kappa_quadratic <- cohen.kappa(data.frame(test_labels, predictions), weights = "quadratic")$value
+  
+  # Store results
+  results[[exam]] <- list(
+    Kappa_Linear = kappa_linear,
+    Kappa_Quadratic = kappa_quadratic
+  )
+}
+
+# 5. Summary Output
+for (exam in names(results)) {
+  cat("\n", exam, "\n")
+  cat("Weighted Kappa (Linear):", results[[exam]]$Kappa_Linear, "\n")
+  cat("Weighted Kappa (Quadratic):", results[[exam]]$Kappa_Quadratic, "\n")
+}
