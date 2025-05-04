@@ -1,0 +1,74 @@
+# Load required libraries
+library(tidyverse)
+library(nnet)  # For multinomial logistic regression
+library(caret) # For preprocessing
+
+# Step 1: Preprocessing and Exclusion Logic
+# Load the dataset
+temp_file <- tempfile()
+download.file("https://github.com/Uviase/Medici..Ne/blob/5c1013c3d4562573aa0f13a0dde2366c8e50e3c3/dataset.zip?raw=true", temp_file)
+unzip(temp_file, exdir = tempdir())
+data_path <- file.path(tempdir(), "dataset.csv")
+
+# Read the dataset, checking if headers are present
+tryCatch({
+  data <- read.csv(data_path, header = TRUE)
+}, error = function(e) {
+  data <- read.csv(data_path, header = FALSE)
+  colnames(data) <- c(
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+    "AA", "AB", "AC", "AD", "AE", "AF", "AG", "AH", "AI", "AJ", "AK", "AL", "AM", "AN", "AO", "AP", "AQ", "AR", "AS", "AT", "AU", "AV", "AW", "AX", "AY", "AZ",
+    "BA", "BB", "BC", "BD", "BE", "BF", "BG", "BH", "BI", "BJ", "BK", "BL", "BM", "BN", "BO", "BP", "BQ", "BR", "BS", "BT", "BU", "BV", "BW", "BX", "BY", "BZ",
+    "CA", "CB", "CC", "CD", "CE", "CF", "CG", "CH", "CI", "CJ", "CK", "CL"
+  )
+})
+
+# Drop rows where specific Electrodermal Activity columns in row 2 have zero values
+eda_cols <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", "AC", "AF", "AI", "AL", "AO", "AR", "AV", "AX", "BA", "BD", "BG", "BJ", "BM", "BP", "BS", "BV", "BY", "CB", "CE", "CH", "CK")
+data <- data[!(data[2, eda_cols] == 0), ]
+
+# Extract Cognitive Academic Performance from row 1 and normalize
+cog_cols <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", "AD", "AG", "AJ", "AM", "AP", "AS", "AV", "AY", "BB", "BE", "BH", "BK", "BN", "BQ", "BT", "BW", "BZ", "CC", "CF", "CI", "CL")
+cognition <- data[1, cog_cols]
+cognition <- as.numeric(cognition)
+cognition <- (cognition - 33) / (94 - 33)  # Normalize to 0–1 scale
+
+# Bin normalized cognition into tiers
+cog_tiers <- cut(
+  cognition,
+  breaks = c(-Inf, 0.333, 0.667, Inf),
+  labels = c("Low", "Mid", "High")
+)
+
+# Create a treatment variable based on cognition tiers
+data <- data[-1, ]  # Remove the first row after extracting cognition
+data$treatment <- rep(cog_tiers, each = nrow(data) / length(cog_tiers))
+
+# Step 3: Identify Covariates
+temp_cols <- c("A", "D", "G", "J", "M", "P", "S", "V", "Y", "AB", "AE", "AH", "AK", "AN", "AQ", "AT", "AW", "AZ", "BC", "BF", "BI", "BL", "BO", "BR", "BU", "BX", "CA", "CD", "CG", "CJ")
+eda_cols <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", "AC", "AF", "AI", "AL", "AO", "AR", "AV", "AX", "BA", "BD", "BG", "BJ", "BM", "BP", "BS", "BV", "BY", "CB", "CE", "CH", "CK")
+covariates <- data[, c(temp_cols, eda_cols)]
+
+# Step 4: Estimate Propensity Scores
+model <- multinom(treatment ~ ., data = cbind(treatment = data$treatment, covariates))
+
+# Step 5: Compute Inverse Probability Weights
+probs <- predict(model, type = "probs")
+weights <- 1 / probs[cbind(seq_len(nrow(probs)), match(data$treatment, colnames(probs)))]
+
+# Step 6: Stabilize the Weights
+marginal_probs <- prop.table(table(data$treatment))
+stabilized_weights <- marginal_probs[data$treatment] / probs[cbind(seq_len(nrow(probs)), match(data$treatment, colnames(probs)))]
+
+# Step 7: Apply IPW to Outcome Model
+outcome_model <- lm(outcome ~ ., data = cbind(outcome = data$outcome, covariates), weights = stabilized_weights)
+
+# Step 8: Diagnostics and Balance Checks
+# Check covariate balance
+balance <- apply(covariates, 2, function(x) {
+  abs(mean(x[data$treatment == "Low"]) - mean(x[data$treatment == "High"])) / sd(x)
+})
+balance
+
+# Check weight distribution
+summary(stabilized_weights)
