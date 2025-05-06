@@ -1,0 +1,115 @@
+# Load required libraries
+library(readr)
+library(dplyr)
+library(tidyr)
+library(nnet)      # For multinomial logistic regression
+library(sensitivity) # For sensitivity analysis
+library(caret)      # For cross-validation
+library(ggplot2)    # For visualization
+
+# Step 1: Define Baseline Model Assumptions
+
+# Load dataset
+dataset <- read_csv("dataset.zip")
+
+# Preprocess dataset: preserve cognition values from row 1 and remove invalid Electrodermal Activity values
+cognition_columns <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", 
+                       "AD", "AG", "AJ", "AM", "AP", "AS", "AV", "AY", 
+                       "BB", "BE", "BH", "BK", "BN", "BQ", "BT", "BW", 
+                       "BZ", "CC", "CF", "CI", "CL")
+eda_columns <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", 
+                 "AC", "AF", "AI", "AL", "AO", "AR", "AV", "AX", 
+                 "BA", "BD", "BG", "BJ", "BM", "BP", "BS", "BV", 
+                 "BY", "CB", "CE", "CH", "CK")
+
+# Preserve cognition values (row 1)
+cognition_values <- dataset[1, cognition_columns]
+
+# Remove Electrodermal Activity values with zero in row 2
+dataset <- dataset[-which(dataset[2, eda_columns] == 0), ]
+
+# Bin cognition values
+bin_cognition <- function(cognition_value) {
+  if (cognition_value >= 33 && cognition_value <= 53.38) {
+    return("Low Cognition")
+  } else if (cognition_value > 53.38 && cognition_value <= 73.77) {
+    return("Mid Cognition")
+  } else {
+    return("High Cognition")
+  }
+}
+cognition_bins <- sapply(cognition_values, bin_cognition)
+
+# Merge Temperature, Electrodermal Activity, and Cognition bins into a single dataset
+merged_data <- data.frame()
+for (i in seq(1, 10)) {
+  temp_data <- dataset[, c(3 * i - 2, 3 * i - 1, 3 * i)]
+  eda_data <- dataset[, c(3 * i - 2 + 1, 3 * i - 1 + 1, 3 * i + 1)]
+  cognition_bin <- rep(cognition_bins[i], 3)
+  merged_data <- rbind(merged_data, cbind(temp_data, eda_data, cognition_bin))
+}
+
+# Rename columns for clarity
+colnames(merged_data) <- c(
+  "Temperature First Midterm", "Temperature Second Midterm", "Temperature Final",
+  "Electrodermal Activity First Midterm", "Electrodermal Activity Second Midterm", "Electrodermal Activity Final",
+  "Cognition Bin"
+)
+
+# Step 2: Identify and Quantify Potential Bias Sources
+
+# Define hypothetical confounders
+# Stress and Sleep Quality are not in the dataset, so we simulate their effects.
+
+# Define bias parameters
+bias_prevalence <- seq(0.1, 0.4, by = 0.1)  # Prevalence of unmeasured confounder
+bias_strength <- seq(1.5, 3, by = 0.5)      # Risk ratios or odds ratios of confounder
+
+# Step 3: Conduct Structured Sensitivity Simulations
+
+# Fit multinomial logistic regression model
+model <- multinom(`Cognition Bin` ~ `Temperature First Midterm` + 
+                    `Temperature Second Midterm` + `Temperature Final` + 
+                    `Electrodermal Activity First Midterm` + 
+                    `Electrodermal Activity Second Midterm` + 
+                    `Electrodermal Activity Final`, 
+                  data = merged_data)
+
+# Perform sensitivity simulations using bias adjustment
+simulate_bias <- function(prevalence, strength) {
+  # Adjust probabilities based on bias parameters
+  adjusted_probabilities <- adjust(model, prevalence, strength)
+  return(adjusted_probabilities)
+}
+
+# Simulate bias influence iteratively and calculate outcome probabilities
+bias_results <- expand.grid(prevalence = bias_prevalence, strength = bias_strength)
+bias_results <- bias_results %>%
+  rowwise() %>%
+  mutate(adjusted_probabilities = list(simulate_bias(prevalence, strength)))
+
+# Perform E-value calculations
+e_value <- function(effect_estimate) {
+  return((effect_estimate + sqrt(effect_estimate * (effect_estimate - 1))) / (effect_estimate - 1))
+}
+e_values <- sapply(bias_results$strength, e_value)
+
+# Step 4: Validate Sensitivity Across Models
+
+# Perform k-fold cross-validation
+control <- trainControl(method = "cv", number = 10)
+cv_model <- train(`Cognition Bin` ~ `Temperature First Midterm` + 
+                    `Temperature Second Midterm` + `Temperature Final` + 
+                    `Electrodermal Activity First Midterm` + 
+                    `Electrodermal Activity Second Midterm` + 
+                    `Electrodermal Activity Final`, 
+                  data = merged_data, method = "multinom", trControl = control)
+
+# Assess stability of performance metrics
+accuracy <- cv_model$results$Accuracy
+auc <- cv_model$results$ROC
+
+# Output results
+print(paste("E-values:", e_values))
+print(paste("Cross-validation Accuracy:", accuracy))
+print(paste("Cross-validation Area Under Curve (AUC):", auc))
