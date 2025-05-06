@@ -1,0 +1,113 @@
+# Load required libraries
+library(readr)
+library(dplyr)
+library(tidyr)
+library(bnlearn)
+
+# Step 1: Preprocessing the Dataset
+
+# 1. Load dataset
+dataset <- read_csv("dataset.zip")
+
+# 2. Preserve cognition values (row 1) for specific columns
+cognition_columns <- c("C", "F", "I", "L", "O", "R", "U", "X", "AA", 
+                       "AD", "AG", "AJ", "AM", "AP", "AS", "AV", "AY", 
+                       "BB", "BE", "BH", "BK", "BN", "BQ", "BT", "BW", 
+                       "BZ", "CC", "CF", "CI", "CL")
+cognition_values <- dataset[1, cognition_columns]
+
+# 3. Remove invalid Electrodermal Activity values (row 2 with zeroes)
+eda_columns <- c("B", "E", "H", "K", "N", "Q", "T", "W", "Z", 
+                 "AC", "AF", "AI", "AL", "AO", "AR", "AV", "AX", 
+                 "BA", "BD", "BG", "BJ", "BM", "BP", "BS", "BV", 
+                 "BY", "CB", "CE", "CH", "CK")
+dataset <- dataset[-which(dataset[2, eda_columns] == 0), ]
+
+# 4. Bin cognition values
+bin_cognition <- function(cognition_value) {
+  if (cognition_value >= 33 && cognition_value <= 53.38) {
+    return("Low Cognition")
+  } else if (cognition_value > 53.38 && cognition_value <= 73.77) {
+    return("Mid Cognition")
+  } else {
+    return("High Cognition")
+  }
+}
+cognition_bins <- sapply(cognition_values, bin_cognition)
+
+# Step 2: Dataset Transformation
+
+# 5. Merge exam events per candidate
+candidates <- 1:10
+temperature_columns <- list(
+  c("A", "D", "G"),
+  c("J", "M", "P"),
+  c("S", "V", "Y"),
+  c("AB", "AE", "AH"),
+  c("AK", "AN", "AQ"),
+  c("AT", "AW", "AZ"),
+  c("BC", "BF", "BI"),
+  c("BL", "BO", "BR"),
+  c("BU", "BX", "CA"),
+  c("CD", "CG", "CJ")
+)
+eda_columns_grouped <- list(
+  c("B", "E", "H"),
+  c("K", "N", "Q"),
+  c("T", "W", "Z"),
+  c("AC", "AF", "AI"),
+  c("AL", "AO", "AR"),
+  c("AV", "AX", "BA"),
+  c("BD", "BG", "BJ"),
+  c("BM", "BP", "BS"),
+  c("BV", "BY", "CB"),
+  c("CE", "CH", "CK")
+)
+
+# Create a merged dataset
+merged_data <- data.frame()
+for (i in seq_along(candidates)) {
+  temp_data <- dataset[, unlist(temperature_columns[i])]
+  eda_data <- dataset[, unlist(eda_columns_grouped[i])]
+  cognition_bin <- rep(cognition_bins[i], 3)
+  merged_data <- rbind(merged_data, cbind(temp_data, eda_data, cognition_bin))
+}
+
+# Rename columns
+colnames(merged_data) <- c(
+  "Temperature First Midterm", "Temperature Second Midterm", "Temperature Final",
+  "Electrodermal Activity First Midterm", "Electrodermal Activity Second Midterm", "Electrodermal Activity Final",
+  "Cognition Bin"
+)
+
+# Step 3: Bayesian Network Construction
+
+# 7. Discretization (if needed)
+merged_data <- merged_data %>%
+  mutate(across(starts_with("Temperature"), ~cut(., breaks = 3, labels = c("Low", "Medium", "High")))) %>%
+  mutate(across(starts_with("Electrodermal Activity"), ~cut(., breaks = 3, labels = c("Low", "Medium", "High"))))
+
+# 8. Define variables for Bayesian network
+bn_data <- merged_data
+
+# 9. Structure Learning
+network <- hc(bn_data)  # Hill-Climbing Algorithm
+
+# 10. Parameter Estimation
+fitted_network <- bn.fit(network, bn_data)
+
+# Step 4: Inference and Evaluation
+
+# 11. Posterior Inference
+query <- cpquery(fitted_network, 
+                 event = (Cognition.Bin == "High Cognition"), 
+                 evidence = (Electrodermal.Activity.Final == "High"))
+
+# 12. Validation
+# Perform k-fold cross-validation
+validation <- bn.cv(fitted_network, bn_data, k = 10, loss = "loglik-g")
+
+# Output results
+print(fitted_network)
+print(query)
+print(validation)
